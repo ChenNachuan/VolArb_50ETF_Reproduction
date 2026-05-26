@@ -4,4 +4,16 @@ version = "0.1.0"
 description = "基于期权复制策略的50ETF波动率套利策略复现"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "matplotlib>=3.7",
+    "pyarrow>=24.0.0",
+    "ipykernel>=7.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
