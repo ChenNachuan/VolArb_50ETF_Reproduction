@@ -39,9 +39,6 @@ VolArb_50ETF_Reproduction/
 ├── notebooks/
 │   ├── 03_backtest_phase_a.ipynb  # Phase A 回测
 │   └── 04_backtest_full.ipynb     # 完整回测
-├── tests/
-│   ├── test_bsm.py                # BSM定价与IV求解测试
-│   └── test_greeks.py             # Greeks计算测试
 └── pyproject.toml
 ```
 
@@ -91,9 +88,6 @@ VolArb_50ETF_Reproduction/
 # 安装依赖
 uv sync
 
-# 运行测试
-uv run pytest tests/ -v
-
 # 启动 notebook
 uv run jupyter notebook notebooks/
 ```
@@ -106,4 +100,3 @@ uv run jupyter notebook notebooks/
 - scipy >= 1.11
 - matplotlib >= 3.7
 - pyarrow >= 24.0
-- pytest >= 9.0 (开发)
