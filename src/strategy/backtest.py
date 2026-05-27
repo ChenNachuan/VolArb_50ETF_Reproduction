@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
-from src.models.bsm import bsm_price
-from src.strategy.hedging import Trade
+from ..models.bsm import bsm_price
+from .hedging import Trade, CONTRACT_MULTIPLIER
 
 
 @dataclass
@@ -37,7 +37,8 @@ class VolArbBacktest:
     def __init__(self, vol_threshold: float | None = None, r: float = 0.04,
                  commission_rate: float = 0.0005, min_t_days: int = 10,
                  close_t_days: int = 5, rolling_threshold: pd.Series | None = None,
-                 hedge: bool = True):
+                 hedge: bool = True, predicted_vol: float = 0.217,
+                 option_type: str = "call"):
         self.vol_threshold = vol_threshold
         self.r = r
         self.commission_rate = commission_rate
@@ -45,6 +46,8 @@ class VolArbBacktest:
         self.close_t_days = close_t_days
         self.rolling_threshold = rolling_threshold
         self.hedge = hedge
+        self.predicted_vol = predicted_vol
+        self.option_type = option_type  # "call" or "put"
 
     def run(self, options_daily: pd.DataFrame, etf_daily: pd.DataFrame,
             expiry_date: pd.Timestamp | None = None,
@@ -107,10 +110,10 @@ class VolArbBacktest:
                 # Use pre-computed IV from data, or compute on the fly
                 current_iv = row.get("iv", np.nan)
                 if np.isnan(current_iv) or current_iv <= 0:
-                    from src.models.implied_vol import implied_vol
+                    from ..models.implied_vol import implied_vol
                     try:
                         current_iv = implied_vol(opt_price, etf_price, trade.strike,
-                                                T, self.r, "call")
+                                                T, self.r, trade.option_type)
                     except Exception:
                         current_iv = trade.entry_iv
                     if np.isnan(current_iv) or current_iv <= 0:
@@ -159,7 +162,7 @@ class VolArbBacktest:
                 K = row["EXERCISE_PRICE"]
                 opt_price = row["close"]
 
-                if T <= 0 or opt_price <= 0:
+                if T <= 0 or opt_price <= 0 or T < self.min_t_days / 365.25:
                     continue
                 if code in today_codes:
                     continue
@@ -168,9 +171,9 @@ class VolArbBacktest:
                 iv = row.get("iv", np.nan)
                 if np.isnan(iv) or iv > 1.0:
                     # Compute IV on the fly if not pre-computed
-                    from src.models.implied_vol import implied_vol
+                    from ..models.implied_vol import implied_vol
                     try:
-                        iv = implied_vol(opt_price, etf_price, K, T, self.r, "call")
+                        iv = implied_vol(opt_price, etf_price, K, T, self.r, self.option_type)
                     except Exception:
                         continue
                     if np.isnan(iv) or iv > 1.0:
@@ -188,17 +191,14 @@ class VolArbBacktest:
                         r=self.r,
                         commission_rate=self.commission_rate,
                         close_t_days=self.close_t_days,
+                        predicted_vol=self.predicted_vol,
+                        option_type=self.option_type,
                     )
-                    # Expected PnL: Vega exposure * expected IV decline
-                    vega_val = row.get("vega", np.nan)
-                    if np.isnan(vega_val):
-                        from src.models.greeks import vega as bsm_vega
-                        T_years = (row["EXPIRY_DATE"] - date).days / 365.25
-                        vega_val = bsm_vega(etf_price, K, T_years, self.r, iv) * 10000
-                    else:
-                        vega_val = vega_val * 10000
-                    iv_decline = iv - threshold
-                    trade.expected_pnl = vega_val * iv_decline * 100
+                    # Expected PnL: BSM price at entry_iv - BSM price at predicted_vol
+                    T_years = (row["EXPIRY_DATE"] - date).days / 365.25
+                    c_entry = bsm_price(etf_price, K, T_years, self.r, iv, self.option_type)
+                    c_predicted = bsm_price(etf_price, K, T_years, self.r, self.predicted_vol, self.option_type)
+                    trade.expected_pnl = (c_entry - c_predicted) * CONTRACT_MULTIPLIER
 
                     record = TradeRecord(
                         code=code,

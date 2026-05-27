@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 
-from src.models.implied_vol import implied_vol
+from ..models.implied_vol import implied_vol
 
 
 def compute_iv_series(options_daily: pd.DataFrame, etf_daily: pd.DataFrame,

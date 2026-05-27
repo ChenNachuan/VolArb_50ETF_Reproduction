@@ -40,9 +40,17 @@ def resample_to_daily(df_5min: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_etf_daily(date_range: tuple[str, str] | None = None) -> pd.DataFrame:
-    """Get 50ETF daily OHLCV, optionally filtered by date range."""
-    etf_5min = load_etf_5min()
-    daily = resample_to_daily(etf_5min)
+    """Get 50ETF daily OHLCV, optionally filtered by date range.
+
+    Uses pre-computed daily data (2010-2025) from combined 5min sources.
+    Falls back to resampling from 5min if parquet not available.
+    """
+    daily_path = DATA_DIR / "etf_daily_510050.parquet"
+    if daily_path.exists():
+        daily = pd.read_parquet(daily_path)
+    else:
+        etf_5min = load_etf_5min()
+        daily = resample_to_daily(etf_5min)
     if date_range:
         daily = daily.loc[date_range[0]:date_range[1]]
     return daily

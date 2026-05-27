@@ -12,89 +12,98 @@
 
 ```
 VolArb_50ETF_Reproduction/
-├── data/                   # 数据存储
-│   ├── raw/                # 原始数据
-│   └── processed/          # 清洗后数据
-├── src/                    # 核心代码
-│   ├── data/               # 数据获取与清洗
-│   │   ├── fetch_50etf.py      # 50ETF 现货数据获取
-│   │   ├── fetch_options.py    # 期权数据获取
-│   │   └── fetch_rate.py       # 无风险利率获取
-│   ├── models/             # 模型与计算
-│   │   ├── volatility.py       # 波动率计算（历史波动率、已实现波动率）
-│   │   ├── vol_cone.py         # 波动率锥构建
-│   │   ├── implied_vol.py      # 隐含波动率反推（BSM 模型）
-│   │   └── greeks.py           # Greeks 计算（Delta, Gamma, Vega）
-│   ├── strategy/           # 策略逻辑
-│   │   ├── signal.py           # 开仓/平仓信号生成
-│   │   ├── hedging.py          # Delta 对冲引擎
-│   │   └── backtest.py         # 回测框架
-│   └── utils/              # 工具函数
-│       ├── bsm.py              # Black-Scholes-Merton 定价公式
-│       └── visualize.py        # 可视化工具
-├── notebooks/              # 分析与实验
-│   ├── 01_data_exploration.ipynb   # 数据探索
-│   ├── 02_vol_cone.ipynb           # 波动率锥分析
-│   ├── 03_backtest.ipynb           # 回测与结果展示
-│   └── 04_risk_analysis.ipynb      # 风险分析
-├── main.py                 # 主入口
-├── pyproject.toml
-└── README.md
+├── Data/                          # 数据存储
+│   ├── 50ETF_5min.parquet         # 50ETF 5分钟行情
+│   ├── 50ETF_options_5min.parquet # 期权5分钟行情
+│   ├── etf_daily_510050.parquet   # 50ETF日线数据
+│   ├── option_metadata.parquet    # 期权合约元数据
+│   ├── options_daily.parquet      # 期权日线数据(缓存)
+│   ├── options_greeks.parquet     # 带Greeks的期权数据(缓存)
+│   └── processed/                 # 处理后的图表
+├── src/                           # 核心代码
+│   ├── data/
+│   │   ├── load_data.py           # 数据加载与5分钟→日线重采样
+│   │   └── preprocess.py          # 数据预处理、IV/Greeks计算
+│   ├── models/
+│   │   ├── bsm.py                 # Black-Scholes-Merton 定价
+│   │   ├── greeks.py              # Greeks 计算 (Delta, Gamma, Vega, Theta)
+│   │   ├── implied_vol.py         # 隐含波动率求解 (二分法/牛顿法)
+│   │   ├── volatility.py          # 历史波动率与已实现波动率
+│   │   └── vol_cone.py            # 波动率锥构建
+│   ├── strategy/
+│   │   ├── signal.py              # 开仓信号生成
+│   │   ├── hedging.py             # Delta 对冲引擎
+│   │   └── backtest.py            # 回测框架
+│   └── utils/
+│       └── visualize.py           # 可视化工具
+├── notebooks/
+│   ├── 03_backtest_phase_a.ipynb  # Phase A 回测
+│   └── 04_backtest_full.ipynb     # 完整回测
+├── tests/
+│   ├── test_bsm.py                # BSM定价与IV求解测试
+│   └── test_greeks.py             # Greeks计算测试
+└── pyproject.toml
 ```
 
-## 复现计划
+## 模块说明
 
-### Phase 1：数据准备
+### `src/models` - 定价与波动率模型
 
-- [ ] 获取 50ETF 现货日收盘价（近 5 年）及 5 分钟高频数据
-- [ ] 获取 50ETF 看涨期权日度数据（价格、行权价、到期日、IV）
-- [ ] 获取无风险利率数据（SHIBOR 或国债收益率）
-- [ ] 数据清洗与对齐
+| 模块 | 功能 |
+|------|------|
+| `bsm.py` | BSM 期权定价公式，支持标量与向量化计算 |
+| `greeks.py` | Delta / Gamma / Vega / Theta 计算，含有限差分验证 |
+| `implied_vol.py` | 二分法 + 牛顿法隐含波动率求解器 |
+| `volatility.py` | 历史波动率 (日线) 与已实现波动率 (5分钟高频) |
+| `vol_cone.py` | 滚动窗口波动率锥构建，支持自定义窗口与分位数 |
 
-### Phase 2：波动率建模
+### `src/data` - 数据处理
 
-- [ ] 实现历史波动率计算（日收益率标准差年化）
-- [ ] 实现已实现波动率计算（基于 5 分钟高频数据）
-- [ ] 构建波动率锥：按不同窗口期（5/10/20/40/60/120 日）滚动计算，取 10%/25%/50%/75%/85%/90% 分位数
-- [ ] 实现 BSM 模型反推隐含波动率
+| 模块 | 功能 |
+|------|------|
+| `load_data.py` | Parquet 数据加载，5分钟→日线 OHLCV 重采样 |
+| `preprocess.py` | 期权数据清洗、ETF/期权对齐、批量 IV 与 Greeks 计算 |
 
-### Phase 3：策略实现
+### `src/strategy` - 策略逻辑
 
-- [ ] 实现开仓信号：IV > 波动率锥 20 日 85% 分位数
-- [ ] 实现 Delta 对冲引擎：固定时间间隔调整现货头寸
-- [ ] 实现平仓逻辑：到期平仓 / 提前平仓（收益 >= 预期收益）
-- [ ] 计算交易成本（现货万分之五、无风险利率 4%）
-
-### Phase 4：回测与分析
-
-- [ ] 搭建回测框架，计算每笔交易 P&L
-- [ ] 复现研报核心结果（26 笔交易、胜率、年化收益率）
-- [ ] 对比到期平仓 vs 提前平仓的表现
-- [ ] 分析不同波动率预测方法对跟踪误差的影响
-
-### Phase 5：风险分析与可视化
-
-- [ ] Vega 风险分析：IV 变化对组合价值的影响
-- [ ] Delta 风险分析：对冲频率与方向性暴露
-- [ ] Gamma 风险分析：临近到期时的非线性风险
-- [ ] 生成策略净值曲线、交易机会分布图、波动率锥图等
+| 模块 | 功能 |
+|------|------|
+| `signal.py` | 基于 IV 与波动率锥阈值的开仓信号 |
+| `hedging.py` | `Trade` 类：逐日 Delta 再平衡、P&L 跟踪、平仓逻辑 |
+| `backtest.py` | `VolArbBacktest` 回测引擎，支持滚动阈值、提前平仓、费用建模 |
 
 ## 策略参数
 
 | 参数 | 值 |
 |------|-----|
-| 标的 | 50ETF |
-| 期权类型 | 看涨期权 (Call) |
+| 标的 | 50ETF (510050) |
+| 期权类型 | 看涨期权 (Call) / 看跌期权 (Put) |
 | 开仓阈值 | IV > 波动率锥 20 日 85% 分位数 |
-| 对冲方式 | Delta 中性，固定时间间隔调整 |
+| 对冲方式 | Delta 中性，逐日再平衡 (使用预测波动率) |
 | 提前平仓条件 | 组合收益 >= 预期收益 |
 | 现货手续费 | 万分之五 |
 | 无风险利率 | 4% |
+| 合约乘数 | 10000 |
+
+## 快速开始
+
+```bash
+# 安装依赖
+uv sync
+
+# 运行测试
+uv run pytest tests/ -v
+
+# 启动 notebook
+uv run jupyter notebook notebooks/
+```
 
 ## 依赖
 
 - Python >= 3.11
-- 数据获取：akshare / tushare
-- 数值计算：numpy, pandas, scipy
-- 可视化：matplotlib
-- 回测：自建框架
+- numpy >= 1.24
+- pandas >= 2.0
+- scipy >= 1.11
+- matplotlib >= 3.7
+- pyarrow >= 24.0
+- pytest >= 9.0 (开发)
