@@ -1,14 +1,43 @@
 """Visualization utilities for volatility arbitrage analysis."""
 
 import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.font_manager as fm
 import numpy as np
 import pandas as pd
+import pathlib
 
-plt.rcParams["font.sans-serif"] = ["SimHei", "Arial Unicode MS", "DejaVu Sans"]
-plt.rcParams["axes.unicode_minus"] = False
+_setup_done = False
+
+_FONT_SANS_SERIF = [
+    "PingFang HK", "Heiti TC", "STHeiti", "Lantinghei SC", "Songti SC", "Arial Unicode MS", "DejaVu Sans"
+]
+
+
+def setup_chinese_font():
+    """Configure matplotlib for Chinese text rendering on macOS.
+
+    Clears the font cache and rebuilds the font manager so that macOS
+    system fonts (PingFang HK, Heiti TC, etc.) are properly discovered.
+    Idempotent — safe to call multiple times.
+    """
+    global _setup_done
+    if _setup_done:
+        return
+
+    # Clear all font-list caches (version-agnostic glob)
+    cache_dir = pathlib.Path(matplotlib.get_cachedir())
+    for f in cache_dir.glob("fontlist*.json"):
+        f.unlink(missing_ok=True)
+
+    # Rebuild the font manager from scratch
+    fm._load_fontmanager(try_read_cache=False)
+
+    plt.rcParams["font.sans-serif"] = _FONT_SANS_SERIF
+    plt.rcParams["axes.unicode_minus"] = False
+
+    _setup_done = True
 
 
 def plot_vol_cone(cone: pd.DataFrame, title: str = "50ETF Volatility Cone"):

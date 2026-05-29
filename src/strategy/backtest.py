@@ -5,6 +5,7 @@ import pandas as pd
 from dataclasses import dataclass, field
 
 from ..models.bsm import bsm_price
+from ..models.greeks import gamma as bsm_gamma, vega as bsm_vega, theta as bsm_theta, delta as bsm_delta
 from .hedging import Trade, CONTRACT_MULTIPLIER
 
 
@@ -29,6 +30,7 @@ class BacktestResult:
     trades: list[TradeRecord]
     equity_curve: pd.Series
     summary: dict
+    daily_greeks: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 class VolArbBacktest:
@@ -80,6 +82,8 @@ class VolArbBacktest:
         trade_records = []
         open_trades = []  # List of (Trade, TradeRecord) tuples
         daily_pnl = []
+        daily_greeks_log = []
+        closed_pnl = 0.0  # accumulated PnL from trades already closed
 
         for date in all_dates:
             if date not in etf.index:
@@ -104,6 +108,7 @@ class VolArbBacktest:
                     record.pnl = trade.cumulative_pnl
                     record.pnl_pct = trade.cumulative_pnl / (trade.option_price * 10000)
                     record.total_cost = trade.total_cost
+                    closed_pnl += trade.cumulative_pnl
                     closed_indices.append(i)
                     continue
 
@@ -119,6 +124,9 @@ class VolArbBacktest:
                     if np.isnan(current_iv) or current_iv <= 0:
                         current_iv = trade.entry_iv
 
+                # Store current IV on trade for Greeks computation
+                trade._current_iv = current_iv
+
                 if self.hedge:
                     # Daily rebalance
                     trade.daily_rebalance(etf_price, opt_price, T, current_iv)
@@ -131,6 +139,7 @@ class VolArbBacktest:
                         record.pnl = trade.cumulative_pnl
                         record.pnl_pct = trade.cumulative_pnl / (trade.option_price * 10000)
                         record.total_cost = trade.total_cost
+                        closed_pnl += trade.cumulative_pnl
                         closed_indices.append(i)
 
                 # Check early close
@@ -141,6 +150,7 @@ class VolArbBacktest:
                     record.pnl = trade.cumulative_pnl
                     record.pnl_pct = trade.cumulative_pnl / (trade.option_price * 10000)
                     record.total_cost = trade.total_cost
+                    closed_pnl += trade.cumulative_pnl
                     closed_indices.append(i)
 
             for i in sorted(closed_indices, reverse=True):
@@ -210,12 +220,47 @@ class VolArbBacktest:
                         entry_etf=etf_price,
                     )
 
+                    trade._current_iv = iv
                     open_trades.append((trade, record))
                     trade_records.append(record)
 
             # Record daily P&L
-            total_pnl = sum(t[0].cumulative_pnl for t in open_trades)
+            total_pnl = sum(t[0].cumulative_pnl for t in open_trades) + closed_pnl
             daily_pnl.append({"date": date, "pnl": total_pnl})
+
+            # Record daily Greeks (aggregate across all open trades)
+            if open_trades:
+                agg_delta = 0.0       # residual delta (post-hedge)
+                agg_delta_option = 0.0  # gross option delta (for P&L attribution)
+                agg_gamma = 0.0
+                agg_vega = 0.0
+                agg_theta = 0.0
+                for trade, _ in open_trades:
+                    S = etf_price
+                    K = trade.strike
+                    T = trade.T
+                    iv = getattr(trade, '_current_iv', trade.entry_iv)
+                    if T > 0 and iv > 0:
+                        g = bsm_gamma(S, K, T, self.r, iv)
+                        v = bsm_vega(S, K, T, self.r, iv)
+                        th = bsm_theta(S, K, T, self.r, iv, trade.option_type)
+                        # Short option: negate Greeks
+                        agg_gamma -= g * CONTRACT_MULTIPLIER
+                        agg_vega -= v * CONTRACT_MULTIPLIER
+                        agg_theta -= th * CONTRACT_MULTIPLIER
+                    agg_delta += trade.spot_shares - trade.current_delta * CONTRACT_MULTIPLIER
+                    # Short option delta (sign depends on call/put)
+                    agg_delta_option += bsm_delta(S, K, T, self.r, iv, trade.option_type) * CONTRACT_MULTIPLIER
+                daily_greeks_log.append({
+                    "date": date,
+                    "etf_price": etf_price,
+                    "num_positions": len(open_trades),
+                    "portfolio_delta": agg_delta,
+                    "portfolio_delta_option": agg_delta_option,  # raw option delta (pre-hedge)
+                    "portfolio_gamma": agg_gamma,
+                    "portfolio_vega": agg_vega,
+                    "portfolio_theta": agg_theta,
+                })
 
         # Close remaining trades
         for trade, record in open_trades:
@@ -233,11 +278,17 @@ class VolArbBacktest:
                     record.pnl_pct = trade.cumulative_pnl / (trade.option_price * 10000)
                     record.total_cost = trade.total_cost
 
+        # Patch the last daily_pnl entry to include remaining trades settled above
+        if daily_pnl:
+            daily_pnl[-1]["pnl"] = sum(t[0].cumulative_pnl for t in open_trades) + closed_pnl
+
         equity_df = pd.DataFrame(daily_pnl).set_index("date") if daily_pnl else pd.DataFrame()
         equity = equity_df["pnl"] if not equity_df.empty else pd.Series(dtype=float)
 
+        greeks_df = pd.DataFrame(daily_greeks_log).set_index("date") if daily_greeks_log else pd.DataFrame()
+
         summary = self._compute_summary(trade_records, equity)
-        return BacktestResult(trades=trade_records, equity_curve=equity, summary=summary)
+        return BacktestResult(trades=trade_records, equity_curve=equity, summary=summary, daily_greeks=greeks_df)
 
     def _compute_summary(self, trades: list[TradeRecord],
                          equity: pd.Series) -> dict:
